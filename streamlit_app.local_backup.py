@@ -65,31 +65,10 @@ def load_indobert(model_dir: str):
     return tokenizer, model, device
 
 
-@st.cache_resource
-def load_indobert_hf(repo_id: str):
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(repo_id)
-    model = AutoModelForSequenceClassification.from_pretrained(repo_id)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    return tokenizer, model, device
-
-
 def load_threshold(path: Path) -> float:
     if path.exists():
         return float(json.loads(path.read_text(encoding="utf-8")).get("threshold", 0.5))
     return 0.5
-
-
-@st.cache_resource
-def load_threshold_hf(repo_id: str) -> float:
-    from huggingface_hub import hf_hub_download
-
-    threshold_file = hf_hub_download(repo_id=repo_id, filename="threshold.json", repo_type="model")
-    return float(json.loads(Path(threshold_file).read_text(encoding="utf-8")).get("threshold", 0.5))
 
 
 def predict_ai_probability(text: str, tokenizer, model, device, max_length: int):
@@ -197,28 +176,13 @@ st.caption("Prototipe deteksi teks AI pada paper jurnal berbahasa Indonesia meng
 
 with st.sidebar:
     st.header("Konfigurasi")
-    model_source = st.radio("Sumber model", options=["Lokal", "Hugging Face"], horizontal=True)
-    model_dir = ""
-    threshold_path = ""
-    hf_repo_id = "USERNAME/proto1"
-    threshold_default = 0.5
-
-    if model_source == "Lokal":
-        model_dir = st.text_input("Path model IndoBERT", value=str(DEFAULT_MODEL_DIR))
-        threshold_path = st.text_input("Path threshold", value=str(DEFAULT_THRESHOLD))
-        threshold_default = load_threshold(Path(threshold_path))
-    else:
-        hf_repo_id = st.text_input("HF repo id (model)", value="USERNAME/proto1")
-        try:
-            threshold_default = load_threshold_hf(hf_repo_id)
-        except Exception:
-            threshold_default = 0.5
-
+    model_dir = st.text_input("Path model IndoBERT", value=str(DEFAULT_MODEL_DIR))
+    threshold_path = st.text_input("Path threshold", value=str(DEFAULT_THRESHOLD))
     threshold = st.slider(
         "Threshold AI",
         min_value=0.05,
         max_value=0.95,
-        value=float(threshold_default),
+        value=load_threshold(Path(threshold_path)),
         step=0.01,
     )
     max_length = st.select_slider("Max token length", options=[128, 256, 384, 512], value=256)
@@ -269,14 +233,11 @@ with right:
         st.info("Masukkan teks atau upload PDF, lalu jalankan deteksi.")
     elif not paragraphs:
         st.warning("Input belum valid atau paragraf yang dapat dianalisis belum tersedia.")
-    elif model_source == "Lokal" and not Path(model_dir).exists():
+    elif not Path(model_dir).exists():
         st.error(f"Model tidak ditemukan: {model_dir}")
     else:
         try:
-            if model_source == "Lokal":
-                tokenizer, model, device = load_indobert(model_dir)
-            else:
-                tokenizer, model, device = load_indobert_hf(hf_repo_id)
+            tokenizer, model, device = load_indobert(model_dir)
             probs = [predict_ai_probability(p, tokenizer, model, device, max_length) for p in paragraphs]
             prob_ai = sum(probs) / len(probs)
             pred = 1 if prob_ai >= threshold else 0

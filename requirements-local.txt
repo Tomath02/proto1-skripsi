@@ -1,0 +1,10 @@
+pandas
+numpy
+scipy
+scikit-learn
+PyMuPDF
+torch
+transformers
+streamlit
+openai
+google-generativeai

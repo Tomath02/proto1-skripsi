@@ -200,7 +200,7 @@ with st.sidebar:
     model_source = st.radio("Sumber model", options=["Lokal", "Hugging Face"], horizontal=True)
     model_dir = ""
     threshold_path = ""
-    hf_repo_id = "USERNAME/proto1"
+    hf_repo_id = "Tomath02/proto1"
     threshold_default = 0.5
 
     if model_source == "Lokal":
@@ -208,7 +208,7 @@ with st.sidebar:
         threshold_path = st.text_input("Path threshold", value=str(DEFAULT_THRESHOLD))
         threshold_default = load_threshold(Path(threshold_path))
     else:
-        hf_repo_id = st.text_input("HF repo id (model)", value="USERNAME/proto1")
+        hf_repo_id = st.text_input("HF repo id (model)", value="Tomath02/proto1")
         try:
             threshold_default = load_threshold_hf(hf_repo_id)
         except Exception:

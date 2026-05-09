@@ -109,6 +109,47 @@ def predict_ai_probability(text: str, tokenizer, model, device, max_length: int)
     return prob_ai
 
 
+def build_token_chunks(text_blocks: list[str], tokenizer, max_length: int, overlap_tokens: int = 32) -> list[str]:
+    # Keep room for special tokens injected by tokenizer/model.
+    chunk_size = max(32, max_length - 2)
+    overlap = min(overlap_tokens, max(0, chunk_size - 8))
+    step = max(1, chunk_size - overlap)
+    out = []
+
+    for block in text_blocks:
+        block = re.sub(r"\s+", " ", (block or "")).strip()
+        if not block:
+            continue
+        token_ids = tokenizer.encode(block, add_special_tokens=False)
+        if not token_ids:
+            continue
+        if len(token_ids) <= chunk_size:
+            out.append(block)
+            continue
+        for start in range(0, len(token_ids), step):
+            window_ids = token_ids[start : start + chunk_size]
+            if not window_ids:
+                break
+            chunk_text = tokenizer.decode(window_ids, skip_special_tokens=True).strip()
+            if chunk_text:
+                out.append(chunk_text)
+            if start + chunk_size >= len(token_ids):
+                break
+    return out
+
+
+def aggregate_doc_score(probs: list[float], mode: str) -> float:
+    if not probs:
+        return 0.0
+    if mode == "max":
+        return max(probs)
+    if mode == "p90":
+        ordered = sorted(probs)
+        idx = int(round((len(ordered) - 1) * 0.90))
+        return ordered[idx]
+    return sum(probs) / len(probs)
+
+
 def _chunk_by_words(text: str, target_words: int = 140, overlap_words: int = 25):
     words = text.split()
     if len(words) <= target_words:
@@ -222,6 +263,8 @@ with st.sidebar:
         step=0.01,
     )
     max_length = st.select_slider("Max token length", options=[128, 256, 384, 512], value=256)
+    overlap_tokens = st.slider("Token overlap", min_value=0, max_value=96, value=32, step=8)
+    agg_mode = st.selectbox("Agregasi skor dokumen", options=["mean", "max", "p90"], index=0)
 
 left, right = st.columns([1.45, 1], gap="large")
 
@@ -277,41 +320,45 @@ with right:
                 tokenizer, model, device = load_indobert(model_dir)
             else:
                 tokenizer, model, device = load_indobert_hf(hf_repo_id)
-            probs = [predict_ai_probability(p, tokenizer, model, device, max_length) for p in paragraphs]
-            prob_ai = sum(probs) / len(probs)
+            token_chunks = build_token_chunks(paragraphs, tokenizer, max_length=max_length, overlap_tokens=overlap_tokens)
+            if not token_chunks:
+                raise ValueError("Chunk token kosong setelah preprocessing. Coba turunkan minimal kata atau ubah input.")
+            probs = [predict_ai_probability(chunk, tokenizer, model, device, max_length) for chunk in token_chunks]
+            prob_ai = aggregate_doc_score(probs, agg_mode)
             pred = 1 if prob_ai >= threshold else 0
             prob_human = 1.0 - prob_ai
 
             if pred == 1:
                 st.markdown("<h2 style='color:#dc2626'>AI</h2>", unsafe_allow_html=True)
-                st.caption("Dokumen terindikasi sebagai hasil Generative AI berdasarkan rerata probabilitas paragraf.")
+                st.caption(f"Dokumen terindikasi AI berdasarkan agregasi `{agg_mode}` atas skor token-chunk.")
             else:
                 st.markdown("<h2 style='color:#15803d'>Human</h2>", unsafe_allow_html=True)
-                st.caption("Dokumen terindikasi sebagai tulisan manusia berdasarkan rerata probabilitas paragraf.")
+                st.caption(f"Dokumen terindikasi Human berdasarkan agregasi `{agg_mode}` atas skor token-chunk.")
 
             st.metric("Probabilitas AI", f"{prob_ai:.2%}")
             st.progress(float(prob_ai))
-            st.metric("Jumlah Paragraf Dianalisis", f"{len(paragraphs)}")
+            st.metric("Paragraf dianalisis", f"{len(paragraphs)}")
+            st.metric("Token-chunk dianalisis", f"{len(token_chunks)}")
             st.dataframe(
                 {
                     "Label": ["Human", "AI"],
                     "Probabilitas": [f"{prob_human:.4f}", f"{prob_ai:.4f}"],
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
-            if len(paragraphs) > 1:
+            if len(token_chunks) > 1:
                 preview_rows = []
-                for idx, (para, score) in enumerate(zip(paragraphs, probs), start=1):
+                for idx, (chunk, score) in enumerate(zip(token_chunks, probs), start=1):
                     preview_rows.append(
                         {
-                            "Paragraf": idx,
+                            "Chunk": idx,
                             "Prob_AI": round(score, 4),
                             "Pred": "AI" if score >= threshold else "Human",
-                            "Preview": para[:180] + ("..." if len(para) > 180 else ""),
+                            "Preview": chunk[:180] + ("..." if len(chunk) > 180 else ""),
                         }
                     )
-                st.dataframe(preview_rows, hide_index=True, use_container_width=True)
+                st.dataframe(preview_rows, hide_index=True, width="stretch")
             st.caption("Hasil bersifat probabilistik dan perlu digunakan sebagai indikator, bukan vonis final.")
         except Exception as exc:
             st.error(f"Gagal memuat atau menjalankan model: {exc}")
